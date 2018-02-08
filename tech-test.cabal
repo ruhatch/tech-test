@@ -1,0 +1,18 @@
+name:                tech-test
+version:             0.1.0.0
+synopsis:            My code for the IOHK Technical Test
+homepage:            https://github.com/ruhatch/tech-test
+license:             PublicDomain
+author:              Rupert Horlick
+maintainer:          ruperthorlick@gmail.com
+category:            Network
+build-type:          Simple
+cabal-version:       >=1.10
+
+executable tech-test
+  main-is:             Main.hs
+  build-depends:       base >=4.10 && <4.11
+                     , distributed-process
+                     , optparse-applicative
+  hs-source-dirs:      src
+  default-language:    Haskell2010
