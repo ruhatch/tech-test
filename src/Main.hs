@@ -36,7 +36,13 @@ main :: IO ()
 main = do
   options@Options {..} <- execParser opts
   setStdGen . mkStdGen . fromIntegral $ fromMaybe 0 optSeed
-  backends <- readNodeFile optNodeFile
+  backends <- maybe
+    ( maybe (error "Must specify one of --node-file or --local-nodes")
+            readNodeFile
+            optNodeFile
+    )
+    initializeLocalNodes
+    optLocalNodes
   mapConcurrently_ (runBackend options) backends
   threadDelay 2e6
 
@@ -131,15 +137,21 @@ readNodeFile file = do
  where
   initializeBackend' (ip, port) = initializeBackend ip port initRemoteTable
 
+initializeLocalNodes :: Natural -> IO [Backend]
+initializeLocalNodes n = traverse
+  (\i -> initializeBackend "127.0.0.1" (show $ 8080 + i) initRemoteTable)
+  [1 .. n]
+
 --------------------------------------------------------------------------------
 -- Options
 --------------------------------------------------------------------------------
 
 data Options = Options
-  { optSendFor  :: Natural
-  , optWaitFor  :: Natural
-  , optSeed     :: Maybe Natural
-  , optNodeFile :: FilePath
+  { optSendFor    :: Natural
+  , optWaitFor    :: Natural
+  , optSeed       :: Maybe Natural
+  , optNodeFile   :: Maybe FilePath
+  , optLocalNodes :: Maybe Natural
   }
 
 opts :: ParserInfo Options
@@ -170,9 +182,20 @@ opts = info (helper <*> parser) mempty
               <> metavar "s"
               )
             )
-      <*> strOption
-            (  help "Path to a node specification file"
-            <> long "node-file"
-            <> short 'f'
-            <> metavar "NODE_FILE"
+      <*> optional
+            ( strOption
+              (  help "Path to a node specification file"
+              <> long "node-file"
+              <> short 'f'
+              <> metavar "NODE_FILE"
+              )
+            )
+      <*> optional
+            ( option
+              auto
+              (  help "A number of nodes to run locally"
+              <> long "local-nodes"
+              <> short 'n'
+              <> metavar "n"
+              )
             )
