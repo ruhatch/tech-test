@@ -1,3 +1,31 @@
 # tech-test
 
 My code for the IOHK Technical Test
+
+## NixOps
+
+*This is not currently working. See #1.*
+
+I have included a NixOps deployment that will provision a number of servers with
+the program. The nodes configured as slaves will run a systemd service, which
+starts the program with their internal AWS IP address and will restart
+automatically. It would then be as simple as running
+
+```
+nixops ssh master-node
+master-node> tech-test IP_ADDRESS 8080 master
+```
+
+To get this running you would need to add an AWS access key to `nixops/aws/.envrc`
+and then run
+
+```
+nixops create <logical.nix> <aws.nix> -d aws
+nixops deploy -d aws
+```
+
+inside the `nixops/aws` folder.
+
+To add a new slave node, for example `node3`, you should add, `node3 = node false;`
+to `nixops/logical.nix` and `node3 = node;` to `nixops/aws/aws.nix`, and then run
+`nixops deploy -d aws` again.

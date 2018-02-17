@@ -33,6 +33,10 @@ import           Numeric.Natural
 import           Options.Applicative
 import           System.Random
 
+--------------------------------------------------------------------------------
+-- Option Types
+--------------------------------------------------------------------------------
+
 data GlobalOpts = GlobalOpts
   { optHost    :: HostName
   , optPort    :: ServiceName
