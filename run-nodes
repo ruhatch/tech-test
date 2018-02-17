@@ -1,0 +1,14 @@
+if [ ! $# -eq 2 ] ; then
+  echo "Usage: run-nodes send-for wait-for";
+  exit 1;
+fi
+
+export PATH=$(nix-build --no-out-link)/bin:$PATH
+
+tech-test 127.0.0.1 8080 slave &
+tech-test 127.0.0.1 8081 slave &
+tech-test 127.0.0.1 8082 slave &
+tech-test 127.0.0.1 8083 slave &
+tech-test 127.0.0.1 8084 slave &
+
+tech-test 127.0.0.1 8085 master --send-for $1 --wait-for $2 --with-seed 2018 --kill

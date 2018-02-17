@@ -2,6 +2,13 @@
 
 My code for the IOHK Technical Test
 
+## Running
+
+The easiest way to run the program is to run `./run-nodes k l`, for your values
+of `k` and `l`. This calls the `run-nodes` script, which will build the program
+with `nix` (so you should have `nix` installed) and run 5 slave nodes and a
+master node. You can patch in more slave nodes and modify the seed here.
+
 ## NixOps
 
 *This is not currently working. See #1.*
