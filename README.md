@@ -36,3 +36,7 @@ inside the `nixops/aws` folder.
 To add a new slave node, for example `node3`, you should add, `node3 = node false;`
 to `nixops/logical.nix` and `node3 = node;` to `nixops/aws/aws.nix`, and then run
 `nixops deploy -d aws` again.
+
+This deployment uses `direnv` to set environment variables in directories, which
+allows us to add nix files to the nix path, set AWS keys, and force nix to use a
+specific state file for the nixops deployment.
