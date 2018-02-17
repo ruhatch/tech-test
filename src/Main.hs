@@ -89,7 +89,7 @@ calcResult set = (S.size set, sumProd)
 -- | Loop a @Process@ for @seconds@ seconds
 spawnLoopForSeconds :: Process () -> Natural -> Process ()
 spawnLoopForSeconds m seconds = do
-  pid <- spawnLocal $ liftIO . threadDelay $ fromIntegral seconds * 1e6
+  pid <- spawnLocal . liftIO . threadDelay $ fromIntegral seconds * 1e6
   withMonitor_ pid go
  where
   go = do
@@ -103,9 +103,9 @@ sendMessages :: MVar TFGen -> [ProcessId] -> Process ()
 sendMessages gen receivers = do
   (n, gen') <- liftIO $ random <$> takeMVar gen
   liftIO $ putMVar gen gen'
-  timestamp <- liftIO $ getCurrentTime
+  timestamp <- liftIO getCurrentTime
   nodeId    <- getSelfNode
-  forM_ receivers $ flip send $ MyMessage (1 - n) timestamp nodeId
+  forM_ receivers . flip send $ MyMessage (1 - n) timestamp nodeId
   liftIO $ threadDelay 5e1
 
 receiveMessages :: MVar MessageSet -> Process ()
@@ -120,9 +120,10 @@ mainProcess MasterOpts {..} genIndex peers = do
 
   -- Set up the RNG
   let initGen = mkTFGen (fromIntegral $ fromMaybe 0 optSeed)
-      bits    = ceiling $ logBase 2 (fromIntegral $ length peers)
+      bits    = ceiling $ logBase (2 :: Double) (fromIntegral $ length peers)
   gen'  <- liftIO . newMVar $ splitn initGen bits genIndex
 
+  -- Link to a timer so the process will die if it hasn't printed in time
   timer <-
     spawnLocal
     . liftIO
@@ -134,11 +135,11 @@ mainProcess MasterOpts {..} genIndex peers = do
   void . spawnLocal $ spawnLoopForSeconds (sendMessages gen' peers) optSendFor
   spawnLoopForSeconds (receiveMessages messageSet) (optSendFor + optWaitFor - 1)
 
-  result <- liftIO $ show . calcResult <$> readMVar messageSet
-  say result
+  say . show . calcResult =<< liftIO (readMVar messageSet)
 
   unlink timer
 
+-- | Slaves wait to be sent the list of peers before executing @mainProcess@
 slaveProcess :: (MasterOpts, Word32) -> Process ()
 slaveProcess (opts, genIndex) = catch
   (expect >>= mainProcess opts genIndex)
@@ -148,8 +149,11 @@ remotable ['slaveProcess]
 
 main :: IO ()
 main = do
+
   GlobalOpts {..} <- execParser globalOptsParser
+
   backend <- initializeBackend optHost optPort (__remoteTable initRemoteTable)
+
   case optCommand of
 
     Master opts@MasterOpts {..} -> do
@@ -165,19 +169,30 @@ main = do
       threadDelay 2e6
 
       startMaster backend $ \slaves -> do
+
         liftIO . putStrLn $ "Slaves: " <> show slaves
+
+        -- Spawn remote slave processes
         receivers <- zipWithM
           ( \node (genIndex :: Word32) ->
             spawn node $ $(mkClosure 'slaveProcess) (opts, genIndex)
           )
           slaves
           [1 .. fromIntegral (length slaves)]
+
+        -- Redirect slave logs to master
         void . spawnLocal $ redirectLogsHere backend receivers
+
+        -- Send slaves the list of peers
         self <- getSelfPid
         forM_ receivers $ flip send (self : receivers)
+
+        -- Run the main process on the master node
         catch (mainProcess opts 0 (self : receivers))
               (\(_ :: ProcessLinkException) -> pure ())
-        liftIO $ threadDelay 5e6
+
+        liftIO $ threadDelay 2e6
+
         when optKillSlaves $ terminateAllSlaves backend
 
     Slave -> startSlave backend
@@ -247,7 +262,7 @@ masterParser =
     <*> switch (help "Whether to terminate slaves after running" <> long "kill")
 
 --------------------------------------------------------------------------------
--- Random Double Orphan Instance
+-- Random Double Orphan Instance (copied from System.Random)
 --------------------------------------------------------------------------------
 
 {-# INLINE randomRFloating #-}
