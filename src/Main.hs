@@ -17,9 +17,13 @@ import           Control.Distributed.Process.Backend.SimpleLocalnet
 import           Control.Distributed.Process.Closure
 import           Control.Distributed.Process.Node                   (initRemoteTable)
 import           Control.Monad                                      (forM_,
-                                                                     void, when)
+                                                                     void, when,
+                                                                     zipWithM)
 import           Data.Binary
 import           Data.Binary.Orphans                                ()
+import           Data.Bits                                          ((.&.))
+import           Data.Int
+import           Data.Maybe                                         (fromMaybe)
 import           Data.Semigroup                                     hiding
                                                                      (option)
 import           Data.Set                                           (Set)
@@ -31,7 +35,9 @@ import           Network.Socket                                     (HostName,
                                                                      ServiceName)
 import           Numeric.Natural
 import           Options.Applicative
-import           System.Random
+import           System.Random.TF
+import           System.Random.TF.Gen
+import           System.Random.TF.Instances
 
 --------------------------------------------------------------------------------
 -- Option Types
@@ -93,12 +99,13 @@ spawnLoopForSeconds m seconds = do
             Just () -> pure ()
             Nothing -> go
 
-sendMessages :: [ProcessId] -> Process ()
-sendMessages receivers = do
-  n         <- liftIO $ (1 -) <$> randomIO
+sendMessages :: MVar TFGen -> [ProcessId] -> Process ()
+sendMessages gen receivers = do
+  (n, gen') <- liftIO $ random <$> takeMVar gen
+  liftIO $ putMVar gen gen'
   timestamp <- liftIO $ getCurrentTime
   nodeId    <- getSelfNode
-  forM_ receivers $ flip send $ MyMessage n timestamp nodeId
+  forM_ receivers $ flip send $ MyMessage (1 - n) timestamp nodeId
   liftIO $ threadDelay 5e1
 
 receiveMessages :: MVar MessageSet -> Process ()
@@ -106,32 +113,42 @@ receiveMessages messageSet = expectTimeout 1e1 >>= \case
   Nothing -> pure ()
   Just m  -> liftIO $ modifyMVar_ messageSet (pure . S.insert m)
 
-mainProcess :: MasterOpts -> [ProcessId] -> Process ()
-mainProcess MasterOpts {..} peers = do
+mainProcess :: MasterOpts -> Word32 -> [ProcessId] -> Process ()
+mainProcess MasterOpts {..} genIndex peers = do
+
   messageSet <- liftIO $ newMVar S.empty
-  timer      <-
+
+  -- Set up the RNG
+  let initGen = mkTFGen (fromIntegral $ fromMaybe 0 optSeed)
+      bits    = ceiling $ logBase 2 (fromIntegral $ length peers)
+  gen'  <- liftIO . newMVar $ splitn initGen bits genIndex
+
+  timer <-
     spawnLocal
     . liftIO
     . threadDelay
     $ fromIntegral (optSendFor + optWaitFor)
     * 1e6
   link timer
-  void . spawnLocal $ spawnLoopForSeconds (sendMessages peers) optSendFor
+
+  void . spawnLocal $ spawnLoopForSeconds (sendMessages gen' peers) optSendFor
   spawnLoopForSeconds (receiveMessages messageSet) (optSendFor + optWaitFor - 1)
+
   result <- liftIO $ show . calcResult <$> readMVar messageSet
   say result
+
   unlink timer
 
-slaveProcess :: MasterOpts -> Process ()
-slaveProcess opts =
-  catch (expect >>= mainProcess opts) (\(_ :: ProcessLinkException) -> pure ())
+slaveProcess :: (MasterOpts, Word32) -> Process ()
+slaveProcess (opts, genIndex) = catch
+  (expect >>= mainProcess opts genIndex)
+  (\(_ :: ProcessLinkException) -> pure ())
 
 remotable ['slaveProcess]
 
 main :: IO ()
 main = do
   GlobalOpts {..} <- execParser globalOptsParser
-  -- setStdGen . mkStdGen . fromIntegral $ fromMaybe 0 optSeed
   backend <- initializeBackend optHost optPort (__remoteTable initRemoteTable)
   case optCommand of
 
@@ -149,11 +166,16 @@ main = do
 
       startMaster backend $ \slaves -> do
         liftIO . putStrLn $ "Slaves: " <> show slaves
-        receivers <- mapM (flip spawn $ $(mkClosure 'slaveProcess) opts) slaves
+        receivers <- zipWithM
+          ( \node (genIndex :: Word32) ->
+            spawn node $ $(mkClosure 'slaveProcess) (opts, genIndex)
+          )
+          slaves
+          [1 .. fromIntegral (length slaves)]
         void . spawnLocal $ redirectLogsHere backend receivers
         self <- getSelfPid
         forM_ receivers $ flip send (self : receivers)
-        catch (mainProcess opts (self : receivers))
+        catch (mainProcess opts 0 (self : receivers))
               (\(_ :: ProcessLinkException) -> pure ())
         liftIO $ threadDelay 5e6
         when optKillSlaves $ terminateAllSlaves backend
@@ -223,3 +245,32 @@ masterParser =
             )
           )
     <*> switch (help "Whether to terminate slaves after running" <> long "kill")
+
+--------------------------------------------------------------------------------
+-- Random Double Orphan Instance
+--------------------------------------------------------------------------------
+
+{-# INLINE randomRFloating #-}
+randomRFloating
+  :: (Fractional a, Num a, Ord a, Random a, RandomGen g)
+  => (a, a)
+  -> g
+  -> (a, g)
+randomRFloating (l, h) g
+  | l > h
+  = randomRFloating (h, l) g
+  | otherwise
+  = let (coef, g') = random g
+    in  (2.0 * (0.5 * l + coef * (0.5 * h - 0.5 * l)), g')  -- avoid overflow
+
+instance Random Double where
+  randomR = randomRFloating
+  random rng     =
+    case random rng of
+      (x,rng') ->
+          -- We use 53 bits of randomness corresponding to the 53 bit significand:
+          ((fromIntegral (mask53 .&. (x::Int64)) :: Double)
+           /  fromIntegral twoto53, rng')
+   where
+    twoto53 = (2::Int64) ^ (53::Int64)
+    mask53 = twoto53 - 1

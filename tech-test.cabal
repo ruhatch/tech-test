@@ -20,7 +20,7 @@ executable tech-test
                      , distributed-process-simplelocalnet
                      , network
                      , optparse-applicative
-                     , random
+                     , tf-random
                      , say
                      , time
   hs-source-dirs:      src
